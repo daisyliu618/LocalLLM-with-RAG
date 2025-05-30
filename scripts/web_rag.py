@@ -13,6 +13,7 @@ import tiktoken
 import hashlib
 import time
 from datetime import datetime
+import subprocess
 
 # Ensure NLTK punkt is available with explicit path setup
 import os
@@ -287,27 +288,12 @@ def main():
         st.subheader("🤖 Model Provider")
         provider = st.selectbox(
             "Select Provider",
-            ["Gemini (Cloud)", "Ollama (Local)"],
-            help="Choose between Google Gemini (cloud) or Ollama (local) models"
+            ["Ollama (Local)", "Gemini (Cloud)"],
+            help="Choose between Ollama (local) or Google Gemini (cloud) models"
         )
         
         # Model-specific settings
-        if provider == "Gemini (Cloud)":
-            st.subheader("☁️ Gemini Settings")
-            gemini_model = st.selectbox(
-                "Gemini Model",
-                ["models/gemini-1.5-pro-latest", "models/gemini-1.5-flash-latest", "models/gemini-pro"],
-                help="Select Gemini model variant"
-            )
-            
-            # Check API key
-            api_key = os.getenv("GEMINI_API_KEY")
-            if api_key:
-                st.success("✅ Gemini API key found")
-            else:
-                st.error("❌ GEMINI_API_KEY not set")
-                
-        else:  # Ollama
+        if provider == "Ollama (Local)": # Ollama
             st.subheader("🏠 Ollama Settings")
             ollama_model = st.selectbox(
                 "Ollama Model",
@@ -321,6 +307,21 @@ def main():
             else:
                 st.error("❌ Ollama server not accessible")
                 st.info("Start Ollama: `ollama serve`")
+        
+        else:
+            st.subheader("☁️ Gemini Settings")
+            gemini_model = st.selectbox(
+                "Gemini Model",
+                ["models/gemini-1.5-pro-latest", "models/gemini-1.5-flash-latest", "models/gemini-pro"],
+                help="Select Gemini model variant"
+            )
+            
+            # Check API key
+            api_key = os.getenv("GEMINI_API_KEY")
+            if api_key:
+                st.success("✅ Gemini API key found")
+            else:
+                st.error("❌ GEMINI_API_KEY not set")
         
         # Context window settings
         st.subheader("📄 Context Window")
@@ -376,16 +377,29 @@ def main():
                     st.write(f"**Provider:** {entry.get('provider', 'Unknown')}")
                     st.write(f"**Answer:** {entry['answer'][:200]}...")
 
-    # Reload Data Button
-    if st.button("🔄 Reload Data (Clear Model Cache)"):
-        st.cache_resource.clear()
-        st.success("Data cache cleared. Models will be reloaded on next query.")
 
     # Use a form to handle Enter key presses
     with st.form("search_form"):
-        query = st.text_input("Your query:", key="query_input", 
+        query = st.text_input("Your question:", key="query_input", 
                             placeholder="Ask anything about your documents...")
-        search_clicked = st.form_submit_button("🔍 Search")
+        col_search, col_rebuild = st.columns([1,1], gap="small")
+        with col_search:
+            search_clicked = st.form_submit_button("🔍 Search")
+        with col_rebuild:
+            rebuild_clicked = st.form_submit_button("📚 Rebuild Data")
+
+    if rebuild_clicked:
+        with st.spinner("Running 'make all' to rebuild data pipeline. This may take a while..."):
+            try:
+                result = subprocess.run(["make", "all"], capture_output=True, text=True, check=True)
+                st.success("✅ Data pipeline rebuilt successfully!")
+                st.text_area("make all output", result.stdout, height=200)
+                st.cache_resource.clear()
+            except subprocess.CalledProcessError as e:
+                st.error(f"[make all failed] {e}")
+                st.text_area("make all error output", e.stderr, height=200)
+        # Don't run search logic if rebuild was clicked
+        return
     
     if search_clicked and query:
         start_time = time.time()
@@ -396,9 +410,7 @@ def main():
             cached_answer, cache_timestamp = get_cached_answer(query, current_provider)
             if cached_answer:
                 st.info(f"📋 Found cached {current_provider} answer from {cache_timestamp}")
-                st.success("### 🎯 Cached Answer:")
-                st.write(cached_answer)
-                
+                st.success(f"### 🎯 Cached Answer:\n\n{cached_answer}")
                 # Show cache performance
                 response_time = time.time() - start_time
                 col1, col2, col3 = st.columns(3)
@@ -408,7 +420,6 @@ def main():
                     st.metric("Cache Hit", "✅ Yes")
                 with col3:
                     st.metric("Provider", current_provider)
-                
                 return
         
         # If not cached, proceed with normal retrieval
@@ -455,8 +466,7 @@ def main():
             if error:
                 st.error(error)
             else:
-                st.success(f"### 🎯 {current_provider} Generated Answer:")
-                st.write(answer)
+                st.success(f"### 🎯 {current_provider} Generated Answer:\n\n{answer}")
                 
                 # Cache the answer if caching is enabled
                 if use_cache and answer:

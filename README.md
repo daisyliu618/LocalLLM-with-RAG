@@ -1,6 +1,6 @@
 # Local RAG Pipeline with Gemini & Ollama
 
-This project is a local Retrieval-Augmented Generation (RAG) pipeline that supports both cloud (Gemini) and local (Ollama) LLMs. It processes documents in various formats (PDF, DOCX, TXT, images, etc.), builds a vector database, and enables semantic search and LLM-powered Q&A via web interface.
+This project is a local Retrieval-Augmented Generation (RAG) pipeline that supports both cloud (Gemini) and local (Ollama) LLMs. It processes documents in various formats (PDF, DOCX, TXT, images, CSV etc.), builds a vector database, and enables semantic search and LLM-powered Q&A via web interface.
 
 ---
 
@@ -11,7 +11,7 @@ This project is a local Retrieval-Augmented Generation (RAG) pipeline that suppo
 │   Data Layer    │───▶│  Processing      │───▶│   Storage       │
 │                 │    │  Pipeline        │    │   Layer         │
 │ • PDF files     │    │ • Document       │    │ • FAISS index   │
-│ • DOCX files    │    │   parsing        │    │ • BM25 corpus   │
+│ • CSV  files    │    │   parsing        │    │ • BM25 corpus   │
 │ • TXT files     │    │ • Sentence       │    │ • Chunk         │
 │ • Images        │    │   chunking       │    │   metadata      │
 │ • Other formats │    │ • Embedding      │    │ • Query cache   │
@@ -34,7 +34,7 @@ This project is a local Retrieval-Augmented Generation (RAG) pipeline that suppo
 **Purpose:** Convert various document formats into searchable chunks
 
 **Process Flow:**
-1. **Document Ingestion:** Handles PDF, DOCX, TXT, images using format-specific parsers
+1. **Document Ingestion:** Handles PDF, DOCX, TXT, CSV images using format-specific parsers
 2. **Text Extraction:** Extracts clean text while preserving structure and metadata
 3. **Sentence Segmentation:** Uses NLTK punkt tokenizer for accurate sentence boundaries
 4. **Chunking Strategy:** Creates overlapping chunks (8 sentences per chunk, 3 sentence overlap)
@@ -215,7 +215,7 @@ User Query
 ## Usage
 
 ### 1. **Add your data**
-- Place your documents in the `data/` folder (supports PDF, DOCX, TXT, images, etc.).
+- Place your documents in the `data/` folder (supports PDF, DOCX, TXT, CSV, images, etc.).
 
 ### 2. **Build and clean with Makefile**
 - **Clean all outputs:**
@@ -230,12 +230,15 @@ User Query
 
 ### 3. **Query your knowledge base**
 
-- **Single interface supporting both Gemini and Ollama:**
+**With Ollama (local LLM):**
+
 - **Start Ollama:**
   ```bash
   ollama serve
   # and pull a model if needed: ollama pull llama3
   ```
+
+- **Single interface supporting both Gemini and Ollama:**
 
   ```bash
   make web
@@ -247,32 +250,12 @@ User Query
   - Provider-specific model selection
   - Real-time connection status
 
-**With Ollama (local LLM):**
-
-- **Web:**
-  ```bash
-  make web-ollama
-  # or
-  streamlit run scripts/web_rag_ollama.py
-  ```
 
 ### 4. **Evaluate Search Quality**
 - Run the evaluation script to test search quality on sample queries:
   ```bash
   python scripts/evaluate_search.py
   ```
-
----
-
-## Troubleshooting
-
-- **After updating files in `data/`, always rebuild:**
-  ```bash
-  make all
-  ```
-
-- **Switching LLMs:**
-  - Use the appropriate web script for Gemini or Ollama (see above).
 
 ---
 

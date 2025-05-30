@@ -82,3 +82,5 @@ nltk_data/
 api_keys.txt
 keys.json
 secrets.json 
+
+prd.txt
