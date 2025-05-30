@@ -69,8 +69,6 @@ def main():
     print("\n" + "="*50)
     print("Index rebuild complete!")
     print("="*50)
-    print("\nYou can now test the improved search with:")
-    print("python scripts/query_rag.py")
 
 if __name__ == "__main__":
     main() 

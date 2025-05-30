@@ -132,8 +132,12 @@ def main():
         st.cache_resource.clear()
         st.success("Cache cleared. Data and models will be reloaded on next query.")
 
-    query = st.text_input("Your query:")
-    if st.button("Search") and query:
+    # Use a form to handle Enter key presses
+    with st.form("search_form"):
+        query = st.text_input("Your query:", key="query_input")
+        search_clicked = st.form_submit_button("Search")
+    
+    if search_clicked and query:
         try:
             with st.spinner("Loading models and indexes..."):
                 index = load_faiss_index()

@@ -64,11 +64,7 @@ This project is a local Retrieval-Augmented Generation (RAG) pipeline that suppo
 ### 3. **Query your knowledge base**
 
 #### **With Gemini (cloud LLM):**
-- **CLI:**
-  ```bash
-  python scripts/query_rag.py
-  ```
-- **Web:**
+
   ```bash
   make web
   # or
@@ -76,14 +72,11 @@ This project is a local Retrieval-Augmented Generation (RAG) pipeline that suppo
   ```
 
 #### **With Ollama (local LLM):**
+
 - **Start Ollama:**
   ```bash
   ollama serve
   # and pull a model if needed: ollama pull llama3
-  ```
-- **CLI:**
-  ```bash
-  python scripts/query_rag_ollama.py
   ```
 - **Web:**
   ```bash
@@ -102,23 +95,13 @@ This project is a local Retrieval-Augmented Generation (RAG) pipeline that suppo
 
 ## Troubleshooting
 
-- **NLTK punkt errors (sentence chunking fallback):**
-  - If you see errors about missing `punkt`, run:
-    ```bash
-    python3 -c "import nltk; nltk.download('punkt', download_dir='venv/nltk_data')"
-    ```
-  - Make sure your virtual environment is activated when running the pipeline.
-
-- **libmagic/tesseract warnings:**
-  - These are optional for filetype detection and OCR. Most text-based workflows will work without them.
-
 - **After updating files in `data/`, always rebuild:**
   ```bash
   make all
   ```
 
 - **Switching LLMs:**
-  - Use the appropriate CLI or web script for Gemini or Ollama (see above).
+  - Use the appropriate web script for Gemini or Ollama (see above).
 
 ---
 
