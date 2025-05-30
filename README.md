@@ -119,7 +119,7 @@ Cache Structure:
 ## Screenshots
 
 ### Web Interface
-![RAG Web Interface](assets/localLLM.png)
+![RAG Web Interface](assets/image.png)
 
 The web interface provides:
 - **Unified search bar** for natural language queries
