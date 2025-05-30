@@ -4,19 +4,115 @@ This project is a local Retrieval-Augmented Generation (RAG) pipeline that suppo
 
 ---
 
-## Features
-- **Document parsing** for PDFs, DOCX, TXT, images, and more
-- **Sentence-based chunking** (8 sentences, 3 overlap) for better context
-- **Embedding** with Sentence Transformers
-- **Vector search** with FAISS + BM25 hybrid search
-- **Query caching** for fast repeated queries
-- **Configurable context window** (1K-16K tokens)
-- **LLM answer generation** with:
-  - Google Gemini (cloud, via API key)
-  - Ollama (local, e.g., Llama 3, Mistral)
-- **Web interface** with localLLM and CloudLLM provider switching
-- **Makefile** for easy build/clean
-- **Automated search quality evaluation**
+## High-Level Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Data Layer    │───▶│  Processing      │───▶│   Storage       │
+│                 │    │  Pipeline        │    │   Layer         │
+│ • PDF files     │    │ • Document       │    │ • FAISS index   │
+│ • DOCX files    │    │   parsing        │    │ • BM25 corpus   │
+│ • TXT files     │    │ • Sentence       │    │ • Chunk         │
+│ • Images        │    │   chunking       │    │   metadata      │
+│ • Other formats │    │ • Embedding      │    │ • Query cache   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                                                         │
+┌─────────────────┐    ┌──────────────────┐             │
+│   User Layer    │◀───│   Retrieval      │◀────────────┘
+│                 │    │   & Generation   │
+│ • Web interface │    │ • Hybrid search  │    ┌─────────────────┐
+│ • Query input   │    │ • Context build  │───▶│   LLM Layer     │
+│ • Result display│    │ • Answer gen     │    │                 │
+│ • Cache mgmt    │    │ • Caching        │    │ • Gemini API    │
+└─────────────────┘    └──────────────────┘    │ • Ollama Local  │
+                                               └─────────────────┘
+```
+
+## Component Details
+
+#### 1. Document Processing Pipeline
+**Purpose:** Convert various document formats into searchable chunks
+
+**Process Flow:**
+1. **Document Ingestion:** Handles PDF, DOCX, TXT, images using format-specific parsers
+2. **Text Extraction:** Extracts clean text while preserving structure and metadata
+3. **Sentence Segmentation:** Uses NLTK punkt tokenizer for accurate sentence boundaries
+4. **Chunking Strategy:** Creates overlapping chunks (8 sentences per chunk, 3 sentence overlap)
+5. **Metadata Preservation:** Tracks source file, chunk index, and position information
+
+**Key Technology Choices:**
+- **Unstructured.io:** For robust multi-format document parsing
+- **NLTK punkt:** For accurate sentence tokenization with fallback mechanisms
+- **Overlap strategy:** Prevents context loss at chunk boundaries
+
+#### 2. Embedding and Indexing System
+**Purpose:** Create searchable vector representations and keyword indices
+
+**Dual Index Approach:**
+```python
+# Semantic Index (FAISS)
+embeddings = sentence_transformer.encode(chunk_texts)
+faiss_index = faiss.IndexFlatIP(embedding_dimension)
+faiss_index.add(embeddings)
+
+# Keyword Index (BM25)
+tokenized_corpus = [tokenize(text) for text in chunk_texts]
+bm25_index = BM25Okapi(tokenized_corpus)
+```
+
+**Technology Rationale:**
+- **Sentence Transformers (all-MiniLM-L6-v2):** Balance between quality and speed
+- **FAISS:** Efficient vector similarity search with potential for scaling
+- **BM25:** Captures exact keyword matches that embeddings might miss
+- **Hybrid Approach:** Combines semantic understanding with precise keyword matching
+
+#### 3. Retrieval System
+**Purpose:** Find relevant chunks using multiple search strategies
+
+**Retrieval Flow:**
+1. **Query Processing:** Tokenize and embed user query
+2. **Parallel Search:** Execute semantic (FAISS) and keyword (BM25) searches simultaneously
+3. **Result Merging:** Combine and deduplicate results from both approaches
+4. **Context Assembly:** Build coherent context within token limits
+
+```python
+# Parallel retrieval
+semantic_results = faiss_index.search(query_embedding, k=5)
+keyword_results = bm25_index.get_top_k(query_tokens, k=5)
+
+# Smart merging with deduplication
+merged_chunks = merge_and_dedupe(semantic_results, keyword_results)
+context = build_context_with_token_limits(merged_chunks, max_tokens=4096)
+```
+
+#### 4. Generation Layer
+**Purpose:** Generate answers using context-aware language models
+
+**Dual Provider Architecture:**
+- **Cloud Provider (Gemini):** High-quality responses with API dependency
+- **Local Provider (Ollama):** Privacy-focused with local inference
+
+**Context Management:**
+- **Token Counting:** Precise token calculation using tiktoken
+- **Smart Truncation:** Maintains sentence boundaries when truncating
+- **Context Optimization:** Maximizes information density within token limits
+
+#### 5. Caching System
+**Purpose:** Optimize performance and reduce API costs
+
+**Multi-Level Caching:**
+```python
+Cache Structure:
+├── Query Normalization (lowercase, strip)
+├── MD5 Hashing (collision-resistant keys)
+├── Provider-Specific Storage (separate Gemini/Ollama caches)
+└── LRU Eviction (maintains 100 most recent queries)
+```
+
+**Cache Benefits:**
+- **Performance:** 10+ second queries → sub-millisecond responses
+- **Cost Reduction:** Eliminates redundant API calls
+- **User Experience:** Instant responses for repeated queries
 
 ---
 
@@ -34,6 +130,59 @@ The web interface provides:
 - **Detailed search results** showing semantic and keyword matches
 - **Performance metrics** including token usage and response times
 
+---
+
+---
+### Data Flow Architecture
+
+```
+User Query
+    │
+    ▼
+┌─────────────────┐
+│  Query Cache    │─── Cache Hit ───┐
+│  Check          │                 │
+└─────────────────┘                 │
+    │ Cache Miss                    │
+    ▼                               │
+┌─────────────────┐                 │
+│  Hybrid         │                 │
+│  Retrieval      │                 │
+│  • FAISS Search │                 │
+│  • BM25 Search  │                 │
+└─────────────────┘                 │
+    │                               │
+    ▼                               │
+┌─────────────────┐                 │
+│  Context        │                 │
+│  Assembly       │                 │
+│  • Merge chunks │                 │
+│  • Token mgmt   │                 │
+└─────────────────┘                 │
+    │                               │
+    ▼                               │
+┌─────────────────┐                 │
+│  LLM Provider   │                 │
+│  Selection      │                 │
+│  • Gemini/Ollama│                 │
+└─────────────────┘                 │
+    │                               │
+    ▼                               │
+┌─────────────────┐                 │
+│  Answer         │                 │
+│  Generation     │                 │
+└─────────────────┘                 │
+    │                               │
+    ▼                               │
+┌─────────────────┐                 │
+│  Cache Storage  │                 │
+└─────────────────┘                 │
+    │                               │
+    ▼                               ▼
+┌─────────────────────────────────────┐
+│         Response to User            │
+└─────────────────────────────────────┘
+```
 ---
 
 ## Setup
