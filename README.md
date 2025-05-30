@@ -23,7 +23,7 @@ This project is a local Retrieval-Augmented Generation (RAG) pipeline that suppo
 ## Screenshots
 
 ### Web Interface
-![RAG Web Interface](assets/localllm.png)
+![RAG Web Interface](assets/localLLM.png)
 
 The web interface provides:
 - **Unified search bar** for natural language queries
