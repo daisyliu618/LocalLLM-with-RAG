@@ -1,6 +1,6 @@
 # Makefile for Local RAG Pipeline
 
-.PHONY: all clean web web-local init
+.PHONY: all clean web web init
 
 init:
 	python3 -m venv venv
@@ -18,5 +18,5 @@ clean:
 web: init
 	./venv/bin/streamlit run scripts/web_rag.py
 
-web-local: init
-	./venv/bin/streamlit run scripts/web_rag_ollama.py
+
+

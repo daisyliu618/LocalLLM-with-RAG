@@ -1,6 +1,6 @@
 # Local RAG Pipeline with Gemini & Ollama
 
-This project is a local Retrieval-Augmented Generation (RAG) pipeline that supports both cloud (Gemini) and local (Ollama) LLMs. It processes documents in various formats (PDF, DOCX, TXT, images, etc.), builds a vector database, and enables semantic search and LLM-powered Q&A via CLI or web interface.
+This project is a local Retrieval-Augmented Generation (RAG) pipeline that supports both cloud (Gemini) and local (Ollama) LLMs. It processes documents in various formats (PDF, DOCX, TXT, images, etc.), builds a vector database, and enables semantic search and LLM-powered Q&A via web interface.
 
 ---
 
@@ -8,13 +8,31 @@ This project is a local Retrieval-Augmented Generation (RAG) pipeline that suppo
 - **Document parsing** for PDFs, DOCX, TXT, images, and more
 - **Sentence-based chunking** (8 sentences, 3 overlap) for better context
 - **Embedding** with Sentence Transformers
-- **Vector search** with FAISS
+- **Vector search** with FAISS + BM25 hybrid search
+- **Query caching** for fast repeated queries
+- **Configurable context window** (1K-16K tokens)
 - **LLM answer generation** with:
   - Google Gemini (cloud, via API key)
   - Ollama (local, e.g., Llama 3, Mistral)
-- **CLI and Streamlit web interfaces** for querying
+- **Web interface** with localLLM and CloudLLM provider switching
 - **Makefile** for easy build/clean
 - **Automated search quality evaluation**
+
+---
+
+## Screenshots
+
+### Web Interface
+![RAG Web Interface](assets/localllm.png)
+
+The web interface provides:
+- **Unified search bar** for natural language queries
+- **Provider selection** (Gemini Cloud vs Ollama Local) with real-time status
+- **Configurable settings** including context window size and search parameters
+- **Query caching** with cache management controls
+- **Generated answers** displayed prominently with source citations
+- **Detailed search results** showing semantic and keyword matches
+- **Performance metrics** including token usage and response times
 
 ---
 
@@ -63,21 +81,25 @@ This project is a local Retrieval-Augmented Generation (RAG) pipeline that suppo
 
 ### 3. **Query your knowledge base**
 
-#### **With Gemini (cloud LLM):**
+- **Single interface supporting both Gemini and Ollama:**
+- **Start Ollama:**
+  ```bash
+  ollama serve
+  # and pull a model if needed: ollama pull llama3
+  ```
 
   ```bash
   make web
   # or
   streamlit run scripts/web_rag.py
   ```
+  - Switch between providers in the sidebar
+  - Separate caching for each provider
+  - Provider-specific model selection
+  - Real-time connection status
 
-#### **With Ollama (local LLM):**
+**With Ollama (local LLM):**
 
-- **Start Ollama:**
-  ```bash
-  ollama serve
-  # and pull a model if needed: ollama pull llama3
-  ```
 - **Web:**
   ```bash
   make web-ollama
