@@ -16,7 +16,7 @@ This project is a local Retrieval-Augmented Generation (RAG) pipeline that suppo
 │ • Images        │    │   chunking       │    │   metadata      │
 │ • Other formats │    │ • Embedding      │    │ • Query cache   │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
-                                                         │
+                                                        │
 ┌─────────────────┐    ┌──────────────────┐             │
 │   User Layer    │◀───│   Retrieval      │◀────────────┘
 │                 │    │   & Generation   │

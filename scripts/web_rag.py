@@ -443,14 +443,39 @@ def main():
                 bm25_indices = np.argsort(bm25_scores)[::-1][:keyword_k]
                 bm25_results = [mapping[idx] for idx in bm25_indices if bm25_scores[idx] > 0]
                 
-                # --- Merge Results ---
+                # --- Merge Results with Smart Prioritization ---
                 seen = set()
                 merged_results = []
-                for res in faiss_results + bm25_results:
+                
+                # First, add high-scoring BM25 results (exact matches get priority)
+                high_score_threshold = 2.0  # Adjust this threshold as needed
+                for idx in bm25_indices:
+                    if idx < 0 or idx >= len(mapping) or bm25_scores[idx] <= 0:
+                        continue
+                    if bm25_scores[idx] >= high_score_threshold:  # High-scoring keyword matches first
+                        res = mapping[idx]
+                        key = (res['file_path'], res['chunk_index'])
+                        if key not in seen:
+                            merged_results.append(res)
+                            seen.add(key)
+                
+                # Then add remaining FAISS semantic results
+                for res in faiss_results:
                     key = (res['file_path'], res['chunk_index'])
                     if key not in seen:
                         merged_results.append(res)
                         seen.add(key)
+                
+                # Finally, add remaining lower-scoring BM25 results
+                for idx in bm25_indices:
+                    if idx < 0 or idx >= len(mapping) or bm25_scores[idx] <= 0:
+                        continue
+                    if bm25_scores[idx] < high_score_threshold:  # Lower-scoring keyword matches last
+                        res = mapping[idx]
+                        key = (res['file_path'], res['chunk_index'])
+                        if key not in seen:
+                            merged_results.append(res)
+                            seen.add(key)
 
             # --- Prepare context for LLM ---
             with st.spinner(f"Building context and generating answer with {current_provider}..."):
