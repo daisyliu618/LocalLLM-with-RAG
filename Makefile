@@ -1,18 +1,22 @@
 # Makefile for Local RAG Pipeline
 
-.PHONY: all clean web web-ollama
+.PHONY: all clean web web-local init
 
-all:
-	python3 scripts/load_documents.py
-	python3 scripts/chunk_documents.py
-	python3 scripts/embed_chunks.py
-	python3 scripts/build_faiss_index.py
+init:
+	python3 -m venv venv
+	. venv/bin/activate && pip install --upgrade pip && pip install -r requirements.txt
+
+all: init
+	./venv/bin/python scripts/load_documents.py
+	./venv/bin/python scripts/chunk_documents.py
+	./venv/bin/python scripts/embed_chunks.py
+	./venv/bin/python scripts/build_faiss_index.py
 
 clean:
 	rm -rf output/*.json output/*.faiss
 
-web:
-	streamlit run scripts/web_rag.py
+web: init
+	./venv/bin/streamlit run scripts/web_rag.py
 
-web-ollama:
-	streamlit run scripts/web_rag_ollama.py 
+web-local: init
+	./venv/bin/streamlit run scripts/web_rag_ollama.py

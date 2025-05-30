@@ -7,7 +7,6 @@ from sentence_transformers import SentenceTransformer
 import requests
 from rank_bm25 import BM25Okapi
 import nltk
-from sentence_transformers import CrossEncoder
 import tiktoken
 
 try:
@@ -18,10 +17,8 @@ except LookupError:
 FAISS_INDEX_FILE = Path("output/chunk_index.faiss")
 MAPPING_FILE = Path("output/chunk_index_mapping.json")
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
-TOP_K = 5
-BM25_K = 5
-RERANK_K = 5
-CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+TOP_K_SEMANTIC = 5
+TOP_K_KEYWORD = 5
 CONTEXT_TOKEN_LIMIT = 2048
 ENCODING_NAME = "cl100k_base"
 OLLAMA_MODEL = "llama3"
@@ -47,17 +44,6 @@ def build_bm25_index(mapping):
     bm25 = BM25Okapi(tokenized_corpus)
     return bm25, chunk_texts
 
-@st.cache_resource
-def load_cross_encoder():
-    return CrossEncoder(CROSS_ENCODER_MODEL)
-
-def rerank_chunks(query, chunks, cross_encoder):
-    pairs = [(query, chunk['chunk_text']) for chunk in chunks]
-    scores = cross_encoder.predict(pairs)
-    scored_chunks = list(zip(chunks, scores))
-    scored_chunks.sort(key=lambda x: x[1], reverse=True)
-    return [chunk for chunk, score in scored_chunks], [score for chunk, score in scored_chunks]
-
 def count_tokens(text, encoding_name=ENCODING_NAME):
     enc = tiktoken.get_encoding(encoding_name)
     return len(enc.encode(text))
@@ -74,7 +60,13 @@ def build_context(chunks, token_limit):
     return "\n\n".join(context_chunks)
 
 def get_ollama_answer(context, query, model=OLLAMA_MODEL):
-    prompt = f"""You are an expert assistant. Answer the user's question using ONLY the provided context. If the answer is not in the context, say 'I don't know.'\n\nContext:\n{context}\n\nQuestion: {query}\nAnswer (cite the source file if possible):"""
+    prompt = f"""You are an expert assistant. Use the following context to answer the user's question.
+
+Context:
+{context}
+
+Question: {query}
+Answer (please cite source files when possible and explain your reasoning):"""
     try:
         response = requests.post(
             OLLAMA_URL,
@@ -90,7 +82,7 @@ def get_ollama_answer(context, query, model=OLLAMA_MODEL):
 
 def main():
     st.title("Local RAG with Ollama")
-    st.write("Enter your ask below. The app will retrieve relevant chunks using both semantic (FAISS) and keyword (BM25) search, rerank them with a cross-encoder, and generate an answer using Ollama. The LLM will only answer from the provided context.")
+    st.write("Enter your ask below. The app will retrieve relevant chunks using both semantic (FAISS) and keyword (BM25) search, then generate an answer using Ollama. The LLM will only answer from the provided context.")
 
     # Reload Data Button
     if st.button("Reload Data (Clear Cache)"):
@@ -104,18 +96,17 @@ def main():
                 index = load_faiss_index()
                 mapping = load_mapping()
                 embedder = load_embedder()
-                cross_encoder = load_cross_encoder()
                 bm25, chunk_texts = build_bm25_index(mapping)
-            with st.spinner("Retrieving and reranking chunks..."):
+            with st.spinner("Retrieving chunks..."):
                 # --- FAISS Semantic Search ---
                 query_emb = embedder.encode([query], convert_to_numpy=True).astype('float32')
-                D, I = index.search(query_emb, TOP_K)
+                D, I = index.search(query_emb, TOP_K_SEMANTIC)
                 faiss_indices = list(I[0])
                 faiss_results = [mapping[idx] for idx in faiss_indices if 0 <= idx < len(mapping)]
                 # --- BM25 Keyword Search ---
                 tokenized_query = nltk.word_tokenize(query.lower())
                 bm25_scores = bm25.get_scores(tokenized_query)
-                bm25_indices = np.argsort(bm25_scores)[::-1][:BM25_K]
+                bm25_indices = np.argsort(bm25_scores)[::-1][:TOP_K_KEYWORD]
                 bm25_results = [mapping[idx] for idx in bm25_indices if bm25_scores[idx] > 0]
                 # --- Merge Results ---
                 seen = set()
@@ -125,28 +116,26 @@ def main():
                     if key not in seen:
                         merged_results.append(res)
                         seen.add(key)
-                # --- Rerank with Cross-Encoder ---
-                reranked_chunks, rerank_scores = rerank_chunks(query, merged_results, cross_encoder)
-            st.subheader(f"Top {TOP_K} Semantic (FAISS) Results:")
+            st.subheader(f"Top {TOP_K_SEMANTIC} Semantic (FAISS) Results:")
             for rank, idx in enumerate(faiss_indices):
                 if idx < 0 or idx >= len(mapping):
                     continue
                 chunk = mapping[idx]
                 with st.expander(f"[FAISS #{rank+1}] File: {chunk['file_path']} | Chunk Index: {chunk['chunk_index']}"):
                     st.write(chunk["chunk_text"])
-            st.subheader(f"Top {BM25_K} Keyword (BM25) Results:")
+            st.subheader(f"Top {TOP_K_KEYWORD} Keyword (BM25) Results:")
             for rank, idx in enumerate(bm25_indices):
-                if idx < 0 or idx >= len(mapping):
+                if idx < 0 or idx >= len(mapping) or bm25_scores[idx] <= 0:
                     continue
                 chunk = mapping[idx]
-                with st.expander(f"[BM25 #{rank+1}] File: {chunk['file_path']} | Chunk Index: {chunk['chunk_index']}"):
+                with st.expander(f"[BM25 #{rank+1}] Score: {bm25_scores[idx]:.4f} | File: {chunk['file_path']} | Chunk Index: {chunk['chunk_index']}"):
                     st.write(chunk["chunk_text"])
-            st.subheader(f"Top {RERANK_K} Reranked Results (Cross-Encoder):")
-            for i, (chunk, score) in enumerate(zip(reranked_chunks[:RERANK_K], rerank_scores[:RERANK_K])):
-                with st.expander(f"[Rerank #{i+1}] Score: {score:.4f} | File: {chunk['file_path']} | Chunk Index: {chunk['chunk_index']}"):
+            st.subheader(f"Combined Results ({len(merged_results)} unique chunks):")
+            for i, chunk in enumerate(merged_results):
+                with st.expander(f"[Combined #{i+1}] File: {chunk['file_path']} | Chunk Index: {chunk['chunk_index']}"):
                     st.write(chunk["chunk_text"])
-            # --- Prepare context for LLM (reranked top results, token-limited) ---
-            context = build_context(reranked_chunks, CONTEXT_TOKEN_LIMIT)
+            # --- Prepare context for LLM (merged results, token-limited) ---
+            context = build_context(merged_results, CONTEXT_TOKEN_LIMIT)
             st.subheader("Ollama LLM Answer:")
             with st.spinner("Generating answer with Ollama..."):
                 answer, error = get_ollama_answer(context, query)
