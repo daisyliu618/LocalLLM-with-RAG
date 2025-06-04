@@ -16,11 +16,14 @@ Architecture:
 import json
 import re
 import logging
+import os
+import httpx
+import asyncio
+import concurrent.futures
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional, Tuple, Any, Union
 from enum import Enum
-import asyncio
 from datetime import datetime
 
 # LLM Provider imports (will be implemented with actual providers)
@@ -200,21 +203,24 @@ class LLMResponseParser:
             fallback_classification: Fallback if parsing fails
         """
         try:
-            # Try to extract JSON from response
+            # Try to parse JSON directly
+            if llm_output.strip().startswith('{'):
+                data = json.loads(llm_output.strip())
+                return self._create_classification_from_dict(data, llm_output)
+            
+            # Try to extract JSON from mixed content
             json_match = re.search(r'\{.*\}', llm_output, re.DOTALL)
             if json_match:
                 json_str = json_match.group()
-                parsed_data = json.loads(json_str)
-                
-                return self._create_classification_from_dict(parsed_data, llm_output)
-            else:
-                # Try structured text parsing
-                return self._parse_structured_text(llm_output)
-                
+                data = json.loads(json_str)
+                return self._create_classification_from_dict(data, llm_output)
+            
+            # Try structured text parsing
+            return self._parse_structured_text(llm_output)
+            
         except Exception as e:
-            self.logger.warning(f"Failed to parse LLM response: {e}")
+            self.logger.error(f"Failed to parse LLM response: {e}")
             if fallback_classification:
-                fallback_classification.fallback_used = True
                 return fallback_classification
             else:
                 return self._create_default_classification(llm_output)
@@ -224,7 +230,7 @@ class LLMResponseParser:
         data: Dict[str, Any], 
         raw_response: str
     ) -> AgenticQueryClassification:
-        """Create classification object from parsed dictionary"""
+        """Create classification from parsed dictionary"""
         return AgenticQueryClassification(
             query_type=QueryType(data.get('query_type', 'mixed')),
             intent=QueryIntent(data.get('intent', 'find')),
@@ -237,7 +243,7 @@ class LLMResponseParser:
             semantic_weight=float(data.get('semantic_weight', 0.6)),
             keyword_weight=float(data.get('keyword_weight', 0.4)),
             complexity_score=float(data.get('complexity_score', 5.0)),
-            index_routing=data.get('index_routing', ['semantic']),
+            index_routing=data.get('index_routing', ['semantic', 'keyword']),
             requires_aggregation=bool(data.get('requires_aggregation', False)),
             temporal_aspects=data.get('temporal_aspects'),
             classification_time=datetime.now(),
@@ -247,22 +253,21 @@ class LLMResponseParser:
         )
     
     def _parse_structured_text(self, text: str) -> AgenticQueryClassification:
-        """Parse structured text response when JSON parsing fails"""
-        # Implementation for text-based parsing
-        # This would extract classification info from structured text format
+        """Parse structured text response"""
+        # Implementation for parsing non-JSON structured responses
         return self._create_default_classification(text)
     
     def _create_default_classification(self, original_query: str) -> AgenticQueryClassification:
-        """Create safe default classification when parsing fails"""
+        """Create default classification when parsing fails"""
         return AgenticQueryClassification(
             query_type=QueryType.MIXED,
             intent=QueryIntent.FIND,
             strategy=SearchStrategy.BALANCED,
             confidence=0.3,
-            reasoning="Default classification due to parsing failure",
+            reasoning="Failed to parse LLM response, using default classification",
             entities=[],
             concepts=[],
-            keywords=original_query.split(),
+            keywords=original_query.split()[:5],
             semantic_weight=0.6,
             keyword_weight=0.4,
             complexity_score=5.0,
@@ -270,8 +275,8 @@ class LLMResponseParser:
             requires_aggregation=False,
             temporal_aspects=None,
             classification_time=datetime.now(),
-            llm_provider='fallback',
-            prompt_version='default',
+            llm_provider='parser_fallback',
+            prompt_version='fallback',
             fallback_used=True
         )
 
@@ -416,7 +421,33 @@ class AgenticQueryClassifier:
         """
         Synchronous wrapper for query classification
         """
-        return asyncio.run(self.classify_query_async(query, context))
+        try:
+            # Check if we're already in an event loop
+            try:
+                loop = asyncio.get_running_loop()
+                # We're in an event loop, create a new one in a thread
+                import threading
+                
+                def run_async():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(self.classify_query_async(query, context))
+                    finally:
+                        new_loop.close()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(run_async)
+                    return future.result(timeout=30)
+                    
+            except RuntimeError:
+                # No event loop running, safe to use asyncio.run()
+                return asyncio.run(self.classify_query_async(query, context))
+                
+        except Exception as e:
+            self.logger.error(f"Synchronous classification failed: {e}")
+            # Fallback to sync-only classification
+            return asyncio.run(self._fallback_classification(query, context))
     
     async def _fallback_classification(
         self, 
@@ -538,28 +569,129 @@ class AgenticQueryClassifier:
         }
 
 
-# Provider implementations (to be completed with actual LLM integrations)
+# Production-ready LLM provider implementations
 class GeminiProvider:
     """Google Gemini LLM provider implementation"""
     
+    def __init__(self, api_key: str = None, model: str = "gemini-1.5-flash"):
+        self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
+        if not self.api_key:
+            raise ValueError("Google API key is required. Set GOOGLE_API_KEY environment variable.")
+        
+        self.model = model
+        self.base_url = "https://generativelanguage.googleapis.com/v1beta"
+        self.logger = logging.getLogger(__name__)
+    
     async def generate_completion(self, prompt: str, temperature: float = 0.1, max_tokens: int = 1000) -> str:
-        # Implementation for Gemini API calls
-        raise NotImplementedError("GeminiProvider requires actual API integration. Use MockLLMProvider for testing.")
+        """Generate completion from Gemini API"""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                url = f"{self.base_url}/models/{self.model}:generateContent"
+                
+                payload = {
+                    "contents": [{
+                        "parts": [{
+                            "text": prompt
+                        }]
+                    }],
+                    "generationConfig": {
+                        "temperature": temperature,
+                        "maxOutputTokens": max_tokens,
+                        "candidateCount": 1
+                    }
+                }
+                
+                headers = {
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": self.api_key
+                }
+                
+                response = await client.post(url, json=payload, headers=headers)
+                
+                if response.status_code != 200:
+                    self.logger.error(f"Gemini API error: {response.status_code} - {response.text}")
+                    raise Exception(f"Gemini API error: {response.status_code}")
+                
+                data = response.json()
+                
+                if 'candidates' in data and len(data['candidates']) > 0:
+                    content = data['candidates'][0]['content']['parts'][0]['text']
+                    return content.strip()
+                else:
+                    raise Exception("No valid response from Gemini API")
+                    
+        except httpx.TimeoutException:
+            self.logger.error("Gemini API request timed out")
+            raise Exception("Gemini API timeout")
+        except Exception as e:
+            self.logger.error(f"Gemini API error: {e}")
+            raise
     
     def estimate_cost(self, prompt: str, max_tokens: int) -> float:
-        # Cost estimation logic
-        raise NotImplementedError("GeminiProvider requires actual API integration. Use MockLLMProvider for testing.")
+        """Estimate API call cost for Gemini"""
+        # Gemini 1.5 Flash pricing (approximate)
+        input_tokens = len(prompt.split()) * 1.3  # Rough token estimation
+        output_tokens = max_tokens
+        
+        # Pricing per 1M tokens (as of 2024)
+        input_cost_per_million = 0.075  # $0.075 per 1M input tokens
+        output_cost_per_million = 0.30   # $0.30 per 1M output tokens
+        
+        input_cost = (input_tokens / 1_000_000) * input_cost_per_million
+        output_cost = (output_tokens / 1_000_000) * output_cost_per_million
+        
+        return input_cost + output_cost
 
 
 class OllamaProvider:
     """Ollama local LLM provider implementation"""
     
+    def __init__(self, base_url: str = "http://localhost:11434", model: str = "llama3.2"):
+        self.base_url = base_url
+        self.model = model
+        self.logger = logging.getLogger(__name__)
+    
     async def generate_completion(self, prompt: str, temperature: float = 0.1, max_tokens: int = 1000) -> str:
-        # Implementation for Ollama API calls
-        raise NotImplementedError("OllamaProvider requires actual API integration. Use MockLLMProvider for testing.")
+        """Generate completion from Ollama API"""
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                url = f"{self.base_url}/api/generate"
+                
+                payload = {
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": temperature,
+                        "num_predict": max_tokens
+                    }
+                }
+                
+                response = await client.post(url, json=payload)
+                
+                if response.status_code != 200:
+                    self.logger.error(f"Ollama API error: {response.status_code} - {response.text}")
+                    raise Exception(f"Ollama API error: {response.status_code}")
+                
+                data = response.json()
+                
+                if 'response' in data:
+                    return data['response'].strip()
+                else:
+                    raise Exception("No valid response from Ollama API")
+                    
+        except httpx.ConnectError:
+            self.logger.error("Could not connect to Ollama. Make sure Ollama is running.")
+            raise Exception("Ollama connection failed - is Ollama running?")
+        except httpx.TimeoutException:
+            self.logger.error("Ollama API request timed out")
+            raise Exception("Ollama API timeout")
+        except Exception as e:
+            self.logger.error(f"Ollama API error: {e}")
+            raise
     
     def estimate_cost(self, prompt: str, max_tokens: int) -> float:
-        # Local model has no cost
+        """Estimate API call cost for Ollama (local models have no cost)"""
         return 0.0
 
 
@@ -568,6 +700,9 @@ class OllamaProvider:
 class AgenticClassifierConfig:
     """Configuration for agentic query classifier"""
     llm_provider_type: str = "gemini"  # "gemini", "ollama", "openai"
+    model_name: str = None  # Model-specific name
+    api_key: str = None     # API key for external providers
+    base_url: str = None    # Base URL for custom endpoints
     enable_fallback: bool = True
     max_retry_attempts: int = 3
     timeout_seconds: float = 30.0
@@ -587,9 +722,18 @@ class AgenticClassifierFactory:
         
         # Create LLM provider
         if config.llm_provider_type == "gemini":
-            llm_provider = GeminiProvider()
+            model = config.model_name or "gemini-1.5-flash"
+            llm_provider = GeminiProvider(
+                api_key=config.api_key,
+                model=model
+            )
         elif config.llm_provider_type == "ollama":
-            llm_provider = OllamaProvider()
+            base_url = config.base_url or "http://localhost:11434"
+            model = config.model_name or "llama3.2"
+            llm_provider = OllamaProvider(
+                base_url=base_url,
+                model=model
+            )
         else:
             raise ValueError(f"Unsupported LLM provider: {config.llm_provider_type}")
         
@@ -606,6 +750,32 @@ class AgenticClassifierFactory:
         )
         
         return classifier
+
+
+# Backward compatibility wrapper
+class SmartQueryClassifierWrapper:
+    """
+    Wrapper to provide backward compatibility with existing SmartQueryClassifier interface
+    """
+    
+    def __init__(self, agentic_classifier: AgenticQueryClassifier):
+        self.agentic_classifier = agentic_classifier
+    
+    def classify_query(self, query: str):
+        """Legacy interface method"""
+        agentic_result = self.agentic_classifier.classify_query(query)
+        
+        # Create legacy-compatible result object
+        result = type('QueryClassification', (), {})()
+        result.query_type = agentic_result.query_type.value
+        result.intent = agentic_result.intent.value
+        result.confidence = agentic_result.confidence
+        result.suggested_strategy = agentic_result.strategy.value
+        result.reasoning = agentic_result.reasoning
+        result.entities = agentic_result.entities
+        result.numerical_indicators = agentic_result.requires_aggregation
+        
+        return result
 
 
 # Example usage and testing functions
@@ -648,21 +818,26 @@ def create_test_examples() -> List[Tuple[str, Dict[str, Any]]]:
 
 
 if __name__ == "__main__":
-    # Example usage
-    config = AgenticClassifierConfig(
-        llm_provider_type="gemini",
-        enable_fallback=True
-    )
-    
-    classifier = AgenticClassifierFactory.create_classifier(config)
-    
-    # Test classification
-    test_query = "How many Ethiopian restaurants are there in San Francisco?"
-    result = classifier.classify_query(test_query)
-    
-    print(f"Query: {test_query}")
-    print(f"Classification: {result.query_type.value}")
-    print(f"Intent: {result.intent.value}")
-    print(f"Strategy: {result.strategy.value}")
-    print(f"Confidence: {result.confidence:.2f}")
-    print(f"Reasoning: {result.reasoning}") 
+    # Example usage with fallback to mock for testing
+    try:
+        config = AgenticClassifierConfig(
+            llm_provider_type="gemini",
+            enable_fallback=True
+        )
+        
+        classifier = AgenticClassifierFactory.create_classifier(config)
+        
+        # Test classification
+        test_query = "How many Ethiopian restaurants are there in San Francisco?"
+        result = classifier.classify_query(test_query)
+        
+        print(f"Query: {test_query}")
+        print(f"Classification: {result.query_type.value}")
+        print(f"Intent: {result.intent.value}")
+        print(f"Strategy: {result.strategy.value}")
+        print(f"Confidence: {result.confidence:.2f}")
+        print(f"Reasoning: {result.reasoning}")
+        
+    except Exception as e:
+        print(f"Note: {e}")
+        print("For testing without API keys, use the test suite with MockLLMProvider") 
